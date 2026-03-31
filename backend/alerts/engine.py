@@ -474,19 +474,28 @@ class AuditLog:
     def get_statistics(self) -> Dict:
         """Get summary statistics from audit log"""
         if not self.alerts:
-            return {"total_alerts": 0}
+            return {
+                "total_alerts": 0,
+                "critical_alerts": 0,
+                "high_alerts": 0,
+                "medium_alerts": 0,
+                "low_alerts": 0,
+                "acknowledged_alerts": 0,
+            }
         
         critical = sum(1 for a in self.alerts if a.severity == "CRITICAL")
         high = sum(1 for a in self.alerts if a.severity == "HIGH")
         medium = sum(1 for a in self.alerts if a.severity == "MEDIUM")
+        low = sum(1 for a in self.alerts if a.severity == "LOW")
         acknowledged = sum(1 for a in self.alerts if a.acknowledged)
         
         return {
             "total_alerts": len(self.alerts),
-            "critical": critical,
-            "high": high,
-            "medium": medium,
-            "acknowledged": acknowledged,
+            "critical_alerts": critical,
+            "high_alerts": high,
+            "medium_alerts": medium,
+            "low_alerts": low,
+            "acknowledged_alerts": acknowledged,
             "acknowledged_rate": acknowledged / len(self.alerts) if self.alerts else 0
         }
 
