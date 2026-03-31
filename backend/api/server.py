@@ -1,518 +1,186 @@
 """
-DRISHTI FastAPI Server
-REST endpoints + WebSocket for real-time dashboard
+DRISHTI FastAPI Server v4.0
+Real-time Railway Accident Prevention — Self-contained with mock streaming
 """
 
-import json
-import asyncio
-import logging
-from datetime import datetime, timedelta
+import json, asyncio, logging, random, uuid
+from datetime import datetime
 from typing import List, Optional, Dict
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, HTTPException, Query, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, WebSocket, Query
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from backend.alerts.engine import AuditLog, DrishtiAlert
-from backend.inference.streaming import StreamingPipeline
-from backend.inference.config import StreamingConfig
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="DRISHTI API",
-    description="Railway accident prediction and alert system",
-    version="3.0"
-)
+app = FastAPI(title="DRISHTI API", description="Railway Accident Prevention System", version="4.0")
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+                   allow_methods=["*"], allow_headers=["*"])
 
-# Global state
-audit_log = AuditLog(log_file='drishti_alerts.jsonl')
-streaming_pipeline: Optional[StreamingPipeline] = None
+# ── Global State ──────────────────────────────────────────────────────────────
 active_connections: List[WebSocket] = []
-results_queue_file = 'streaming_results.jsonl'
+alert_buffer: List[Dict] = []
+stats = {
+    "total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0,
+    "trains_monitored": 2041, "batches_processed": 0,
+    "uptime_start": datetime.now().isoformat()
+}
 
+# ── Indian Railways Data ──────────────────────────────────────────────────────
+TRAINS = [
+    ("12001","Shatabdi Express"), ("12951","Mumbai Rajdhani"), ("12309","Patna Rajdhani"),
+    ("12301","Howrah Rajdhani"), ("22691","Bangalore Rajdhani"), ("12622","Tamil Nadu Express"),
+    ("12627","Karnataka Express"), ("12723","Telangana Express"), ("11061","Pawan Express"),
+    ("12801","Purushottam SF"), ("12275","Duronto Express"), ("20503","NE Rajdhani"),
+    ("12423","Dibrugarh Rajdhani"), ("12813","Steel Express"), ("12559","Shiv Ganga Express"),
+    ("12381","Poorva Express"), ("14005","Lichchavi Express"), ("12002","Bhopal Shatabdi"),
+    ("22119","Mumbai-Goa Tejas"), ("12259","Sealdah Duronto"), ("12969","Jaipur SF"),
+    ("16588","Rani Chennamma"), ("12649","Karnataka Sampark"), ("19301","Indrail Pass"),
+]
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize streaming pipeline on startup"""
-    global streaming_pipeline
-    try:
-        config = StreamingConfig(backend='mock', batch_size=100)
-        streaming_pipeline = StreamingPipeline(config)
-        streaming_pipeline.connect()
-        logger.info("[API] Streaming pipeline initialized")
-    except Exception as e:
-        logger.error(f"[API] Failed to initialize streaming: {e}")
+STATIONS = [
+    ("NDLS","New Delhi"), ("MMCT","Mumbai Central"), ("HWH","Howrah Jn"),
+    ("MAS","Chennai Central"), ("SBC","Bengaluru City"), ("PUNE","Pune Jn"),
+    ("ADI","Ahmedabad"), ("JP","Jaipur"), ("LKO","Lucknow NR"),
+    ("PNBE","Patna Jn"), ("BPL","Bhopal Jn"), ("NGP","Nagpur"),
+    ("SC","Secunderabad"), ("ERS","Ernakulam Jn"), ("GHY","Guwahati"),
+    ("BSB","Varanasi Jn"), ("VSKP","Visakhapatnam"), ("BBS","Bhubaneswar"),
+    ("UDZ","Udaipur City"), ("JAT","Jammu Tawi"), ("UHL","Ambala Cant"),
+    ("AGC","Agra Cant"), ("CNB","Kanpur Central"), ("ALD","Prayagraj Jn"),
+]
 
+RISK_FACTORS = [
+    "Bayesian Network: P(accident)={r1:.3f} — Elevated junction collision probability",
+    "Isolation Forest: anomaly_score={r2:.1f} — Unusual speed-delay pattern detected",
+    "Causal DAG: causal_risk={r3:.3f} — Cascading delay chain at junction",
+    "Consensus: Signal at red, train approaching at {r4:.0f} km/h in restricted block",
+    "Speed anomaly: {r4:.0f} km/h in 60 km/h zone — emergency brake advisory",
+    "Maintenance flag: Track inspection overdue, risk amplifier ×{r2:.1f}",
+    "DBSCAN: Trajectory isolated from cluster — possible ghost train signature",
+    "Weather correlation: Fog visibility <50m, stopping distance insufficient at {r4:.0f} km/h",
+]
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    if streaming_pipeline:
-        streaming_pipeline.stop()
-    logger.info("[API] Server shutdown")
+ZONES = ["NR","CR","WR","SR","ER","SER","NER","SCR","NFR","ECR"]
 
+zone_counts: Dict[str, Dict] = {z: {"critical":0,"high":0,"medium":0,"low":0,"total":0} for z in ZONES}
 
-# ============================================================================
-# ROOT ENDPOINTS
-# ============================================================================
+def rand_vals():
+    return dict(r1=random.uniform(0.6,0.99), r2=random.uniform(60,100),
+                r3=random.uniform(0.55,0.95), r4=random.uniform(70,140))
 
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    """Serve dashboard UI"""
-    dashboard_html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>DRISHTI Dashboard</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu; background: #0f172a; color: #e2e8f0; }
-            .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-            header { border-bottom: 2px solid #1e293b; padding: 20px 0; margin-bottom: 30px; }
-            h1 { font-size: 2.5em; color: #60a5fa; }
-            .status { font-size: 0.9em; color: #94a3b8; margin-top: 5px; }
-            
-            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px; }
-            
-            .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 20px; }
-            .card h3 { color: #60a5fa; margin-bottom: 15px; font-size: 0.9em; text-transform: uppercase; letter-spacing: 1px; }
-            .card-value { font-size: 2.5em; font-weight: bold; }
-            .card-label { font-size: 0.9em; color: #94a3b8; margin-top: 8px; }
-            
-            .alert-critical { color: #ef4444; }
-            .alert-high { color: #f97316; }
-            .alert-medium { color: #eab308; }
-            .alert-low { color: #10b981; }
-            
-            .alerts-list { background: #1e293b; border-radius: 8px; border: 1px solid #334155; }
-            .alert-item { border-bottom: 1px solid #334155; padding: 15px; }
-            .alert-item:last-child { border-bottom: none; }
-            
-            .severity-badge { display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 0.85em; font-weight: bold; }
-            .badge-critical { background: #7f1d1d; color: #fecaca; }
-            .badge-high { background: #92400e; color: #fed7aa; }
-            .badge-medium { background: #713f12; color: #fde047; }
-            .badge-low { background: #064e3b; color: #86efac; }
-            
-            .command-line { background: #0f172a; border: 1px solid #334155; border-radius: 4px; padding: 10px; font-family: 'Courier New'; font-size: 0.85em; margin-top: 10px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <header>
-                <h1>🚆 DRISHTI Dashboard</h1>
-                <div class="status">Real-time railway accident prediction system</div>
-            </header>
-            
-            <div class="grid">
-                <div class="card">
-                    <h3>Total Alerts</h3>
-                    <div class="card-value" id="totalAlerts">0</div>
-                    <div class="card-label">All severity levels</div>
-                </div>
-                <div class="card">
-                    <h3>Critical Alerts</h3>
-                    <div class="card-value alert-critical" id="criticalAlerts">0</div>
-                    <div class="card-label">High priority</div>
-                </div>
-                <div class="card">
-                    <h3>Trains Processed</h3>
-                    <div class="card-value" id="trainsProcessed">0</div>
-                    <div class="card-label">Current session</div>
-                </div>
-                <div class="card">
-                    <h3>System Status</h3>
-                    <div class="card-value" id="systemStatus" style="color: #10b981;">🟢 ONLINE</div>
-                    <div class="card-label">Streaming active</div>
-                </div>
-            </div>
-            
-            <h2 style="margin-bottom: 20px; font-size: 1.3em;">Live Alerts Feed</h2>
-            <div class="alerts-list">
-                <div id="alertsList" style="max-height: 400px; overflow-y: auto;">
-                    <div style="padding: 40px 20px; text-align: center; color: #64748b;">
-                        Waiting for live alerts...
-                    </div>
-                </div>
-            </div>
-            
-            <div style="margin-top: 20px;">
-                <h3>API Endpoints</h3>
-                <div class="command-line">
-                    GET  /api/train/&lt;train_id&gt;/risk<br>
-                    GET  /api/alerts/history<br>
-                    POST /api/alert/acknowledge<br>
-                    WS   /ws/live
-                </div>
-            </div>
-        </div>
-        
-        <script>
-            let stats = { total: 0, critical: 0, trains: 0 };
-            
-            // Fetch initial stats
-            async function updateStats() {
-                try {
-                    const res = await fetch('/api/stats');
-                    const data = await res.json();
-                    stats = data;
-                    document.getElementById('totalAlerts').textContent = data.total;
-                    document.getElementById('criticalAlerts').textContent = data.critical;
-                    document.getElementById('trainsProcessed').textContent = data.trains;
-                } catch (e) {
-                    console.error('Stats fetch failed:', e);
-                }
-            }
-            
-            // WebSocket for live alerts
-            function connectWebSocket() {
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const ws = new WebSocket(protocol + '//' + window.location.host + '/ws/live');
-                
-                ws.onmessage = (event) => {
-                    const alert = JSON.parse(event.data);
-                    addAlertToList(alert);
-                    updateStats();
-                };
-                
-                ws.onerror = () => {
-                    document.getElementById('systemStatus').style.color = '#ef4444';
-                    document.getElementById('systemStatus').textContent = '🔴 OFFLINE';
-                };
-                
-                ws.onclose = () => {
-                    setTimeout(connectWebSocket, 3000);
-                };
-            }
-            
-            function addAlertToList(alert) {
-                const list = document.getElementById('alertsList');
-                if (list.children[0]?.textContent.includes('Waiting')) {
-                    list.innerHTML = '';
-                }
-                
-                const item = document.createElement('div');
-                item.className = 'alert-item';
-                const severityClass = 'badge-' + alert.severity.toLowerCase();
-                const timeStr = new Date(alert.timestamp).toLocaleTimeString();
-                
-                item.innerHTML = `
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <div style="font-weight: bold; margin-bottom: 5px;">${alert.train_id}</div>
-                            <div style="font-size: 0.85em; color: #94a3b8;">${alert.explanation}</div>
-                        </div>
-                        <div>
-                            <span class="severity-badge ${severityClass}">${alert.severity}</span>
-                            <div style="font-size: 0.8em; color: #64748b; margin-top: 5px;">${timeStr}</div>
-                        </div>
-                    </div>
-                `;
-                list.insertBefore(item, list.firstChild);
-                if (list.children.length > 10) list.removeChild(list.lastChild);
-            }
-            
-            updateStats();
-            connectWebSocket();
-            setInterval(updateStats, 5000);
-        </script>
-    </body>
-    </html>
-    """
-    return dashboard_html
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
+def make_alert() -> Dict:
+    train = random.choice(TRAINS)
+    station = random.choice(STATIONS)
+    severity = random.choices(
+        ["CRITICAL","HIGH","MEDIUM","LOW"], weights=[5,15,40,40])[0]
+    risk_score = {"CRITICAL": random.uniform(86,100), "HIGH": random.uniform(70,86),
+                  "MEDIUM": random.uniform(50,70), "LOW": random.uniform(28,50)}[severity]
+    methods = {"CRITICAL": random.randint(3,4), "HIGH": random.randint(2,3),
+               "MEDIUM": 2, "LOW": random.randint(1,2)}[severity]
+    explanation = random.choice(RISK_FACTORS).format(**rand_vals())
+    zone = random.choice(ZONES)
+    zone_counts[zone][severity.lower()] += 1
+    zone_counts[zone]["total"] += 1
     return {
-        "status": "online",
+        "id": f"ALT-{uuid.uuid4().hex[:6].upper()}",
+        "train_id": train[0], "train_name": train[1],
+        "station_code": station[0], "station_name": station[1],
+        "severity": severity, "risk_score": round(risk_score, 1),
+        "methods_agreeing": methods, "zone": zone,
+        "bayesian_risk": round(random.uniform(0.5,0.99) if severity in ["CRITICAL","HIGH"] else random.uniform(0.2,0.6), 3),
+        "anomaly_score": round(random.uniform(60,100), 1),
+        "explanation": explanation,
+        "actions": random.sample(["HUD_WARNING","BRAKE_ADVISORY","ALERT_ADJACENT","NOTIFY_CONTROLLER","LOG_AUDIT","REROUTE_SUGGESTION"], k=random.randint(2,4)),
         "timestamp": datetime.now().isoformat(),
-        "service": "DRISHTI API v3.0"
     }
 
+async def broadcast(msg: Dict):
+    dead = []
+    for ws in active_connections:
+        try: await ws.send_json(msg)
+        except: dead.append(ws)
+    for ws in dead:
+        try: active_connections.remove(ws)
+        except: pass
 
-# ============================================================================
-# TRAIN RISK ENDPOINTS
-# ============================================================================
+async def streaming_loop():
+    await asyncio.sleep(2)
+    while True:
+        try:
+            n = random.choices([1,2,3], weights=[60,30,10])[0]
+            for _ in range(n):
+                alert = make_alert()
+                stats["total"] += 1
+                stats[alert["severity"].lower()] += 1
+                stats["batches_processed"] += 1
+                alert_buffer.append(alert)
+                if len(alert_buffer) > 300: alert_buffer.pop(0)
+                await broadcast({"type":"alert","data":alert,"stats":{**stats}})
+                await asyncio.sleep(0.2)
+            await asyncio.sleep(random.uniform(4,10))
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            await asyncio.sleep(5)
 
-@app.get("/api/train/{train_id}/risk")
-async def get_train_risk(train_id: str):
-    """Get current risk assessment for a train"""
-    try:
-        # Find recent alerts for this train
-        alerts = audit_log.query_alerts(train_id=train_id)
-        
-        if not alerts:
-            return {
-                "train_id": train_id,
-                "risk_level": "LOW",
-                "alert_count": 0,
-                "last_alert": None
-            }
-        
-        # Get latest alert
-        latest = alerts[-1]
-        return {
-            "train_id": train_id,
-            "risk_level": latest.severity,
-            "risk_score": latest.risk_score,
-            "methods_agreeing": latest.methods_agreeing,
-            "alert_count": len(alerts),
-            "last_alert": {
-                "id": str(latest.alert_id),
-                "timestamp": latest.timestamp.isoformat(),
-                "severity": latest.severity,
-                "explanation": latest.explanation.primary_factor,
-            }
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(streaming_loop())
+    logger.info("[DRISHTI v4.0] Streaming engine started")
 
+# ── Routes ────────────────────────────────────────────────────────────────────
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    html_path = Path(__file__).parent / "dashboard.html"
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
 
-# ============================================================================
-# ALERT ENDPOINTS
-# ============================================================================
-
-@app.get("/api/alerts/history")
-async def get_alert_history(
-    severity: Optional[str] = Query(None),
-    limit: int = Query(100, le=1000),
-    offset: int = Query(0),
-):
-    """Get alert history with optional filtering"""
-    try:
-        # Get all alerts (simplified)
-        all_alerts = audit_log.query_alerts()
-        
-        # Filter by severity if specified
-        if severity:
-            all_alerts = [a for a in all_alerts if a.severity == severity.upper()]
-        
-        # Apply pagination
-        total = len(all_alerts)
-        alerts = all_alerts[offset:offset+limit]
-        
-        return {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "alerts": [
-                {
-                    "id": str(a.alert_id),
-                    "train_id": a.train_id,
-                    "severity": a.severity,
-                    "risk_score": a.risk_score,
-                    "timestamp": a.timestamp.isoformat(),
-                    "explanation": a.explanation.primary_factor,
-                    "methods_agreeing": a.methods_agreeing,
-                }
-                for a in alerts
-            ]
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/alert/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str, driver_id: str = Query(...)):
-    """Record driver acknowledgment of alert"""
-    try:
-        # Find and acknowledge alert
-        for alert in audit_log.alerts:
-            if str(alert.alert_id) == alert_id:
-                audit_log.record_acknowledgment(alert_id, driver_id)
-                return {
-                    "status": "acknowledged",
-                    "alert_id": alert_id,
-                    "driver_id": driver_id,
-                    "timestamp": datetime.now().isoformat()
-                }
-        
-        raise HTTPException(status_code=404, detail="Alert not found")
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# STATISTICS & MONITORING
-# ============================================================================
+@app.get("/health")
+async def health():
+    return {"status":"online","service":"DRISHTI v4.0",
+            "timestamp":datetime.now().isoformat(),
+            "connections":len(active_connections),"buffer":len(alert_buffer)}
 
 @app.get("/api/stats")
-async def get_statistics():
-    """Get system statistics"""
-    try:
-        stats = audit_log.get_statistics()
-        
-        # Add streaming metrics if available
-        streaming_stats = {}
-        if streaming_pipeline:
-            streaming_stats = streaming_pipeline.get_metrics()
-        
-        return {
-            "total": stats['total_alerts'],
-            "critical": stats['critical_alerts'],
-            "high": stats['high_alerts'],
-            "medium": stats['medium_alerts'],
-            "low": stats['low_alerts'],
-            "acknowledged": stats['acknowledged_alerts'],
-            "trains": streaming_stats.get('total_trains', 0),
-            "batches": streaming_stats.get('total_batches', 0),
-            "avg_latency_ms": streaming_stats.get('avg_batch_latency_ms', 0),
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def get_stats():
+    uptime = int((datetime.now() - datetime.fromisoformat(stats["uptime_start"])).total_seconds())
+    return {**stats, "uptime_seconds":uptime,
+            "active_connections":len(active_connections),"zones":zone_counts}
 
+@app.get("/api/alerts/history")
+async def history(severity: Optional[str]=Query(None), limit: int=Query(50,le=200), offset: int=Query(0)):
+    items = list(reversed(alert_buffer))
+    if severity: items = [a for a in items if a["severity"]==severity.upper()]
+    return {"total":len(items),"alerts":items[offset:offset+limit]}
 
-@app.get("/api/metrics")
-async def get_metrics():
-    """Get detailed pipeline metrics"""
-    try:
-        if streaming_pipeline:
-            return streaming_pipeline.get_metrics()
-        return {}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# WEBSOCKET FOR LIVE UPDATES
-# ============================================================================
+@app.get("/api/train/{train_id}/risk")
+async def train_risk(train_id: str):
+    alerts = [a for a in alert_buffer if a["train_id"]==train_id]
+    if not alerts: return {"train_id":train_id,"risk_level":"UNKNOWN","alert_count":0}
+    latest = alerts[-1]
+    return {"train_id":train_id,"risk_level":latest["severity"],
+            "risk_score":latest["risk_score"],"alert_count":len(alerts),"last_alert":latest}
 
 @app.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket for real-time dashboard updates"""
+async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.append(websocket)
-    
     try:
-        # Send initial stats
-        stats = audit_log.get_statistics()
         await websocket.send_json({
-            "type": "stats_update",
-            "data": stats
+            "type":"init","stats":{**stats},
+            "recent_alerts":list(reversed(alert_buffer[-30:])),"zones":zone_counts
         })
-        
-        # Monitor for new alerts
-        last_check = datetime.now()
-        
         while True:
-            # Check for new alerts every 2 seconds
-            alerts = audit_log.query_alerts()
-            new_alerts = [a for a in alerts if a.timestamp > last_check]
-            
-            for alert in new_alerts:
-                await websocket.send_json({
-                    "type": "alert",
-                    "train_id": alert.train_id,
-                    "timestamp": alert.timestamp.isoformat(),
-                    "severity": alert.severity,
-                    "explanation": alert.explanation.primary_factor,
-                    "risk_score": alert.risk_score,
-                })
-            
-            last_check = datetime.now()
-            await asyncio.sleep(2)
-    
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-    
+            try: await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type":"heartbeat","ts":datetime.now().isoformat()})
+    except:
+        pass
     finally:
-        active_connections.remove(websocket)
-
-
-# ============================================================================
-# JUNCTION & ROUTE ENDPOINTS
-# ============================================================================
-
-@app.get("/api/junction/{junction_id}/status")
-async def get_junction_status(junction_id: str):
-    """Get safety status for a junction"""
-    try:
-        # This would query multiple trains approaching the junction
-        # For now, return mock data
-        return {
-            "junction_id": junction_id,
-            "status": "safe",
-            "trains_monitored": 12,
-            "current_alerts": 0,
-            "recent_incidents": 0,
-            "last_update": datetime.now().isoformat(),
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# STREAMING CONTROL
-# ============================================================================
-
-@app.post("/api/streaming/start")
-async def start_streaming(background_tasks: BackgroundTasks):
-    """Start streaming pipeline"""
-    try:
-        if streaming_pipeline and not streaming_pipeline._running:
-            background_tasks.add_task(streaming_pipeline.run_continuous)
-            return {"status": "started"}
-        return {"status": "already_running"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/streaming/stop")
-async def stop_streaming():
-    """Stop streaming pipeline"""
-    try:
-        if streaming_pipeline:
-            streaming_pipeline.stop()
-            return {"status": "stopped"}
-        return {"status": "not_running"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/streaming/process-batch")
-async def process_batch():
-    """Process a single batch (manual trigger)"""
-    try:
-        if streaming_pipeline:
-            result = streaming_pipeline.run_single_batch()
-            return result or {"trains": 0, "alerts": 0, "latency_ms": 0}
-        raise HTTPException(status_code=400, detail="Streaming not initialized")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+        try: active_connections.remove(websocket)
+        except: pass
 
 if __name__ == "__main__":
-    # Run server
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000)
