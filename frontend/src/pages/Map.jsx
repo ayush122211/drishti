@@ -1,92 +1,197 @@
 import { useState, useEffect } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker } from 'react-leaflet'
-import 'leaflet/dist/leaflet.css'
+import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet'
 import { Link } from 'react-router-dom'
+import 'leaflet/dist/leaflet.css'
+import { Layers, Filter } from 'lucide-react'
 
-const RISKS = { CRITICAL: '#ef4444', HIGH: '#f97316', MEDIUM: '#eab308', LOW: '#22c55e' }
+const RISKS = {
+  CRITICAL: { col: '#ef4444', r: 11 },
+  HIGH:     { col: '#f97316', r: 8 },
+  MEDIUM:   { col: '#eab308', r: 6 },
+  LOW:      { col: '#22c55e', r: 5 },
+}
+
+const MAP_TILES = {
+  dark:   'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  night:  'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+  sat:    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+}
+
+function PulsingMarker({ alert }) {
+  const inf = RISKS[alert.severity] || RISKS.LOW
+  return (
+    <CircleMarker
+      center={[alert.lat, alert.lng]}
+      radius={inf.r}
+      pathOptions={{
+        color: inf.col, fillColor: inf.col,
+        fillOpacity: alert.severity === 'CRITICAL' ? 0.85 : 0.55,
+        weight: alert.severity === 'CRITICAL' ? 2 : 1,
+      }}
+    >
+      <Popup className="drishti-popup">
+        <div style={{ padding: 14, minWidth: 220 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, alignItems: 'flex-start' }}>
+            <div style={{ fontWeight: 800, fontSize: '0.9rem' }}>🚆 {alert.train_id}</div>
+            <span style={{
+              background: `${inf.col}22`, color: inf.col, border: `1px solid ${inf.col}55`,
+              fontSize: '0.62rem', fontWeight: 700, padding: '2px 7px', borderRadius: 10
+            }}>{alert.severity}</span>
+          </div>
+          <div style={{ color: '#7c8fad', fontSize: '0.78rem', marginBottom: 2 }}>
+            {alert.train_name && <span>{alert.train_name} · </span>}
+            Risk: <span style={{ color: inf.col, fontWeight: 700 }}>{alert.risk_score}%</span>
+          </div>
+          <div style={{ color: '#7c8fad', fontSize: '0.75rem', marginBottom: 8 }}>
+            📍 {alert.station_name}
+          </div>
+          {alert.explanation && (
+            <div style={{ fontSize: '0.72rem', color: '#4a5568', borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 8, marginBottom: 8 }}>
+              {alert.explanation.substring(0, 100)}…
+            </div>
+          )}
+          <Link to={`/train/${alert.train_id}`} style={{
+            display: 'inline-block', background: '#3b82f622', border: '1px solid #3b82f655',
+            color: '#60a5fa', fontSize: '0.74rem', padding: '4px 10px', borderRadius: 6,
+            fontWeight: 600
+          }}>
+            Deep Analysis →
+          </Link>
+        </div>
+      </Popup>
+    </CircleMarker>
+  )
+}
+
+function MapController({ center, zoom }) {
+  const map = useMap()
+  useEffect(() => { map.setView(center, zoom) }, [center, zoom, map])
+  return null
+}
 
 export default function NetworkMap() {
   const [alerts, setAlerts] = useState([])
+  const [filter, setFilter] = useState('ALL')
+  const [tileKey, setTileKey] = useState('dark')
+  const [count, setCount] = useState(0)
 
   useEffect(() => {
-    // Initial fetch of recent locations
-    const host = import.meta.env.DEV ? 'http://localhost:8000' : ''
-    fetch(`${host}/api/alerts/history?limit=100`)
+    const host = ''
+    fetch(`${host}/api/alerts/history?limit=200`)
       .then(r => r.json())
       .then(d => {
-        // Keep exactly one latest coordinate per train
-        const activeTrains = new Map()
-        d.alerts.forEach(a => {
-          if (!activeTrains.has(a.train_id)) activeTrains.set(a.train_id, a)
-        })
-        setAlerts(Array.from(activeTrains.values()))
+        const map = new Map()
+        d.alerts.forEach(a => { if (!map.has(a.train_id)) map.set(a.train_id, a) })
+        setAlerts(Array.from(map.values()))
+        setCount(d.alerts.length)
       })
-      
-    // Subscribe to live stream for real-time map plots
+      .catch(() => {})
+
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = import.meta.env.DEV ? `ws://localhost:8000/ws/live` : `${proto}//${window.location.host}/ws/live`
+    const wsUrl = `${proto}//${window.location.host}/ws/live`
     const ws = new WebSocket(wsUrl)
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data)
       if (msg.type === 'alert' && msg.data) {
         setAlerts(prev => {
-          const map = new Map(prev.map(p => [p.train_id, p]))
-          map.set(msg.data.train_id, msg.data)
-          return Array.from(map.values())
+          const m = new Map(prev.map(p => [p.train_id, p]))
+          m.set(msg.data.train_id, msg.data)
+          return Array.from(m.values())
         })
       }
     }
     return () => ws.close()
   }, [])
 
+  const visible = filter === 'ALL' ? alerts : alerts.filter(a => a.severity === filter)
+  const critCount = alerts.filter(a => a.severity === 'CRITICAL').length
+  const highCount  = alerts.filter(a => a.severity === 'HIGH').length
+
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '16px 20px', background: 'rgba(5,9,26,0.9)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', zIndex: 10 }}>
-        <div>
-          <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Live Network View</h2>
-          <div style={{ fontSize: '0.75rem', color: 'var(--t3)' }}>Geospatial tracking of active alert anomalies across Indian Railways</div>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+
+      {/* Header bar */}
+      <div style={{
+        padding: '10px 16px', background: 'rgba(4,7,26,0.92)', borderBottom: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', gap: 12, zIndex: 10, flexShrink: 0
+      }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Live Network View</div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--t3)' }}>
+            Geo-tracking {alerts.length} trains · {count} total alerts processed
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--t2)' }}><span style={{ color: 'var(--red)' }}>●</span> Critical</span>
-          <span style={{ fontSize: '0.8rem', color: 'var(--orange)' }}><span style={{ color: 'var(--orange)' }}>●</span> High</span>
+
+        {/* Filter pills */}
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <Filter size={12} color="var(--t3)" style={{ marginRight: 4 }} />
+          {['ALL','CRITICAL','HIGH','MEDIUM','LOW'].map(f => (
+            <button key={f} onClick={() => setFilter(f)} style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: '0.68rem', fontWeight: 700,
+              background: filter === f ? (f === 'CRITICAL' ? 'var(--red-g)' : f === 'HIGH' ? 'var(--orange-g)' : f === 'MEDIUM' ? 'var(--yellow-g)' : f === 'LOW' ? 'var(--green-g)' : 'var(--blue-gg)') : 'var(--card)',
+              color: filter === f ? (f === 'CRITICAL' ? 'var(--red)' : f === 'HIGH' ? 'var(--orange)' : f === 'MEDIUM' ? 'var(--yellow)' : f === 'LOW' ? 'var(--green)' : 'var(--blue)') : 'var(--t3)',
+              border: `1px solid ${filter === f ? 'var(--border-b)' : 'var(--border)'}`,
+              cursor: 'pointer', transition: 'all 0.15s'
+            }}>
+              {f}
+              {f !== 'ALL' && <span style={{ marginLeft: 4, opacity: 0.7 }}>
+                ({alerts.filter(a => a.severity === f).length})
+              </span>}
+            </button>
+          ))}
+        </div>
+
+        {/* Tile switcher */}
+        <div style={{ display: 'flex', gap: 4 }}>
+          <Layers size={12} color="var(--t3)" style={{ marginRight: 4, alignSelf: 'center' }} />
+          {Object.keys(MAP_TILES).map(t => (
+            <button key={t} onClick={() => setTileKey(t)} style={{
+              padding: '4px 8px', borderRadius: 5, fontSize: '0.65rem', fontWeight: 600,
+              background: tileKey === t ? 'var(--blue-g)' : 'var(--card)',
+              color: tileKey === t ? 'var(--blue)' : 'var(--t3)',
+              border: `1px solid ${tileKey === t ? 'var(--blue-b)' : 'var(--border)'}`,
+              cursor: 'pointer', textTransform: 'capitalize'
+            }}>{t}</button>
+          ))}
+        </div>
+
+        {/* Legend */}
+        <div style={{ display: 'flex', gap: 10, borderLeft: '1px solid var(--border)', paddingLeft: 12 }}>
+          {Object.entries(RISKS).map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.68rem' }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: v.col }} />
+              <span style={{ color: 'var(--t2)' }}>{k.charAt(0)+k.slice(1).toLowerCase()}</span>
+            </div>
+          ))}
         </div>
       </div>
-      
-      <div style={{ flex: 1, position: 'relative' }}>
+
+      {/* Map */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <div className="scan-line" />
         <MapContainer center={[22.5, 79.0]} zoom={5} style={{ height: '100%', width: '100%' }}>
-          <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            attribution='&copy; <a href="https://carto.com/">CARTO</a>'
-          />
-          {alerts.map(a => (
-            <CircleMarker 
-              key={a.id}
-              center={[a.lat, a.lng]} 
-              radius={a.severity === 'CRITICAL' ? 10 : a.severity === 'HIGH' ? 8 : 6}
-              pathOptions={{
-                color: RISKS[a.severity],
-                fillColor: RISKS[a.severity],
-                fillOpacity: a.severity === 'CRITICAL' ? 0.8 : 0.5,
-              }}
-            >
-              <Popup className="drishti-popup">
-                <div style={{ background: '#080e20', color: '#fff', padding: '10px', borderRadius: '8px' }}>
-                  <div style={{ fontSize: '1rem', fontWeight: 700 }}>🚆 {a.train_id} {a.train_name}</div>
-                  <div style={{ color: RISKS[a.severity], fontSize: '0.8rem', fontWeight: 600, margin: '4px 0' }}>{a.severity} RISK ({a.risk_score}%)</div>
-                  <div style={{ fontSize: '0.8rem', color: '#8b9fc0', marginBottom: '8px' }}>📍 {a.station_name}</div>
-                  <Link to={`/train/${a.train_id}`} style={{ color: '#3b82f6', fontSize: '0.85rem', textDecoration: 'underline' }}>View Deep Analysis</Link>
-                </div>
-              </Popup>
-            </CircleMarker>
-          ))}
+          <TileLayer key={tileKey} url={MAP_TILES[tileKey]} attribution="© CARTO / ESRI" />
+          {visible.map(a => <PulsingMarker key={a.train_id} alert={a} />)}
         </MapContainer>
-        
-        {/* Style override for Leaflet popup specifically */}
-        <style dangerouslySetInnerHTML={{__html:`
-          .leaflet-popup-content-wrapper { background: #080e20 !important; border: 1px solid rgba(255,255,255,0.1); padding: 0 !important; }
-          .leaflet-popup-tip { background: #080e20 !important; }
-          .leaflet-popup-content { margin: 0 !important; }
-        `}} />
+
+        {/* Stats overlay */}
+        <div style={{
+          position: 'absolute', bottom: 16, left: 16, zIndex: 900,
+          background: 'rgba(4,7,26,0.88)', border: '1px solid var(--border-b)',
+          borderRadius: 10, padding: '10px 14px', backdropFilter: 'blur(12px)',
+          display: 'flex', gap: 20
+        }}>
+          {[
+            { label: 'Visible', val: visible.length, col: 'var(--cyan)' },
+            { label: 'Critical', val: critCount, col: 'var(--red)' },
+            { label: 'High', val: highCount, col: 'var(--orange)' },
+          ].map(s => (
+            <div key={s.label} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 800, color: s.col, fontFamily: 'JetBrains Mono, monospace' }}>{s.val}</div>
+              <div style={{ fontSize: '0.58rem', color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: 1 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
