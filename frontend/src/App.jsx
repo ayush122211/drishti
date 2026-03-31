@@ -145,20 +145,18 @@ export default function App() {
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28, padding: '4px 4px 16px', borderBottom: '1px solid var(--border)' }}>
           <div style={{
-            width: 36, height: 36, flexShrink: 0,
-            background: 'linear-gradient(135deg, #3b82f6 0%, #1e40af 100%)',
-            borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 0 20px rgba(59,130,246,0.4)'
+            width: 32, height: 32, flexShrink: 0,
+            background: 'var(--blue)',
+            borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}>
-            <ShieldAlert color="white" size={18} />
+            <ShieldAlert color="white" size={16} />
           </div>
           <div>
             <div style={{
-              fontSize: '1.05rem', fontWeight: 900, letterSpacing: 3,
-              background: 'linear-gradient(135deg, #60a5fa, #a5b4fc)',
-              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+              fontSize: '1rem', fontWeight: 800, letterSpacing: 1.5,
+              color: 'var(--t1)'
             }}>DRISHTI</div>
-            <div style={{ fontSize: '0.58rem', color: 'var(--t3)', letterSpacing: 1.5 }}>RAILWAY INTELLIGENCE</div>
+            <div style={{ fontSize: '0.62rem', color: 'var(--t3)', letterSpacing: 0.5 }}>NATIONAL RAILWAY GRID</div>
           </div>
         </div>
 

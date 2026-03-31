@@ -1,52 +1,52 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 :root {
-  --bg:     #04071a;
-  --bg2:    #070c21;
-  --bg3:    #0a1128;
-  --bg4:    #0d1630;
+  --bg:       #0f172a;
+  --bg2:      #1e293b;
+  --bg3:      #334155;
+  --bg4:      #475569;
 
-  --card:   rgba(255,255,255,0.032);
-  --card-h: rgba(255,255,255,0.06);
-  --card-hh:rgba(255,255,255,0.09);
+  --card:     #1e293b;
+  --card-h:   #334155;
+  --card-hh:  #475569;
 
-  --border:   rgba(255,255,255,0.07);
-  --border-b: rgba(255,255,255,0.13);
-  --border-h: rgba(255,255,255,0.20);
+  --border:   #334155;
+  --border-b: #475569;
+  --border-h: #64748b;
 
-  --t1: #eef2ff;
-  --t2: #7c8fad;
-  --t3: #3d4f6a;
-  --t4: #1e2d45;
+  --t1: #f8fafc;
+  --t2: #cbd5e1;
+  --t3: #94a3b8;
+  --t4: #64748b;
 
   --blue:     #3b82f6;
-  --blue-b:   rgba(59,130,246,0.35);
-  --blue-g:   rgba(59,130,246,0.18);
-  --blue-gg:  rgba(59,130,246,0.08);
+  --blue-b:   rgba(59,130,246,0.3);
+  --blue-g:   rgba(59,130,246,0.1);
+  --blue-gg:  rgba(59,130,246,0.05);
 
-  --cyan:     #06b6d4;
-  --cyan-g:   rgba(6,182,212,0.15);
-  --cyan-b:   rgba(6,182,212,0.3);
+  --cyan:     #0ea5e9;
+  --cyan-g:   rgba(14,165,233,0.1);
+  --cyan-b:   rgba(14,165,233,0.3);
 
   --red:      #ef4444;
-  --red-g:    rgba(239,68,68,0.13);
-  --red-b:    rgba(239,68,68,0.38);
+  --red-g:    rgba(239,68,68,0.1);
+  --red-b:    rgba(239,68,68,0.3);
 
-  --orange:   #f97316;
-  --orange-g: rgba(249,115,22,0.11);
-  --orange-b: rgba(249,115,22,0.35);
+  --orange:   #f59e0b;
+  --orange-g: rgba(245,158,11,0.1);
+  --orange-b: rgba(245,158,11,0.3);
 
   --yellow:   #eab308;
-  --yellow-g: rgba(234,179,8,0.09);
+  --yellow-g: rgba(234,179,8,0.1);
   --yellow-b: rgba(234,179,8,0.3);
 
   --green:    #22c55e;
-  --green-g:  rgba(34,197,94,0.09);
-  --green-b:  rgba(34,197,94,0.28);
+  --green-g:  rgba(34,197,94,0.1);
+  --green-b:  rgba(34,197,94,0.3);
 
-  --purple:   #a855f7;
-  --purple-g: rgba(168,85,247,0.12);
-  --purple-b: rgba(168,85,247,0.3);
+  --purple:   #8b5cf6;
+  --purple-g: rgba(139,92,246,0.1);
+  --purple-b: rgba(139,92,246,0.3);
 
   --sidebar-w: 240px;
 }
@@ -77,8 +77,7 @@ input, select { font-family: inherit; outline: none; }
 .glass-panel {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  backdrop-filter: blur(16px);
+  border-radius: 8px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -97,7 +96,7 @@ input, select { font-family: inherit; outline: none; }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: rgba(0,0,0,0.18);
+  background: var(--bg3);
   flex-shrink: 0;
 }
 
@@ -143,7 +142,7 @@ input, select { font-family: inherit; outline: none; }
 .btn-primary {
   background: var(--blue); color: white;
 }
-.btn-primary:hover { background: #2563eb; box-shadow: 0 0 20px var(--blue-b); }
+.btn-primary:hover { background: #2563eb; }
 .btn-ghost {
   background: var(--card); color: var(--t2);
   border: 1px solid var(--border);
@@ -169,18 +168,14 @@ input, select { font-family: inherit; outline: none; }
   to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes pulseGlow {
-  0%, 100% { box-shadow: 0 0 6px rgba(239,68,68,0.15); }
-  50%       { box-shadow: 0 0 22px rgba(239,68,68,0.55); }
+  0%, 100% { border-color: rgba(239,68,68,0.2); }
+  50%      { border-color: rgba(239,68,68,0.6); }
 }
 @keyframes blink {
   0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
 }
 @keyframes spin {
   0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); }
-}
-@keyframes scanLine {
-  0% { transform: translateY(-100%); }
-  100% { transform: translateY(400px); }
 }
 @keyframes gridPulse {
   0%, 100% { opacity: 0.03; } 50% { opacity: 0.07; }
@@ -208,7 +203,7 @@ input, select { font-family: inherit; outline: none; }
 
 /* === MAP === */
 .leaflet-container {
-  background: #050b1e !important;
+  background: #cbd5e1 !important; /* light gray for standard map tiles to load cleanly */
   width: 100%; height: 100%;
   z-index: 1;
   font-family: 'Inter', sans-serif;
@@ -222,8 +217,8 @@ input, select { font-family: inherit; outline: none; }
 .leaflet-popup-content-wrapper {
   background: var(--bg2) !important;
   border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
   padding: 0 !important;
   color: var(--t1) !important;
 }
@@ -269,8 +264,8 @@ input, select { font-family: inherit; outline: none; }
   display: inline-block;
   width: 8px; height: 8px; border-radius: 50%;
 }
-.dot-green { background: var(--green); box-shadow: 0 0 8px var(--green-b); }
-.dot-red   { background: var(--red);   animation: blink 1.2s infinite; }
+.dot-green { background: var(--green); }
+.dot-red   { background: var(--red); }
 .dot-yellow{ background: var(--yellow); }
 .dot-blue  { background: var(--blue); }
 
@@ -293,10 +288,4 @@ input, select { font-family: inherit; outline: none; }
 .rounded { border-radius: 8px; }
 .shrink-0 { flex-shrink: 0; }
 
-/* Scan effect overlay for map */
-.scan-line {
-  position: absolute; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent);
-  animation: scanLine 3s linear infinite;
-  pointer-events: none; z-index: 900;
-}
+/* Removed scan-line */
