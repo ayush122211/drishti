@@ -50,7 +50,6 @@ services:
   - type: web
     name: drishti-frontend
     runtime: static
-    region: singapore
     plan: free
     
     buildCommand: |
@@ -88,3 +87,6 @@ services:
     region: singapore
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: Allow all (internal Render services)
