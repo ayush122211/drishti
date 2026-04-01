@@ -8,9 +8,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, "feature/*", "fix/*"]
+    branches: [master, develop, "feature/*", "fix/*"]
   pull_request:
-    branches: [main, develop]
+    branches: [master, develop]
     types: [opened, synchronize, reopened]
 
 # Cancel in-progress runs for the same branch
@@ -82,11 +82,11 @@ jobs:
             -v --tb=short \
             --junit-xml=test-results/intelligence.xml
 
-      - name: Run OSINT engine tests
+      - name: Run Phase 1 + Hardening + Phase 3 tests
         run: |
-          pytest tests/test_osint.py \
+          pytest tests/test_phase1_ingestion.py tests/test_security_hardening.py tests/test_phase3_ml_runtime.py \
             -v --tb=short \
-            --junit-xml=test-results/osint.xml || true  # non-fatal (network dependent)
+            --junit-xml=test-results/phase-tests.xml
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -128,7 +128,7 @@ jobs:
         run: python scripts/generate_graph.py
 
       - name: Enrich with OSINT data
-        run: python backend/data/osint_engine.py
+        run: python backend/data/osint_engine.py || true
 
       - name: Run API endpoint tests
         env:
@@ -233,7 +233,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-backend, build-frontend]
     # Only run on main and develop to save CI minutes
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop'
     steps:
       - uses: actions/checkout@v4
 
