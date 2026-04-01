@@ -35,15 +35,16 @@ services:
         value: "3.11.0"
       - key: REDIS_URL
         fromService:
-          type: redis
+          type: keyvalue
           name: drishti-redis
           property: connectionString
       - key: SECRET_KEY
         generateValue: true
 
   # ── DRISHTI Frontend (Static Site) ──────────────────────────────────────────
-  - type: static
+  - type: web
     name: drishti-frontend
+    runtime: static
     buildCommand: |
       cd frontend
       npm ci
@@ -67,11 +68,11 @@ services:
         source: /*
         destination: /index.html
 
-  # ── Redis (Key-Value Cache) ───────────────────────────────────────────────────
-  - type: redis
+  # ── Redis / Key Value Cache ───────────────────────────────────────────────────
+  - type: keyvalue
     name: drishti-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
     ipAllowList:
       - source: 0.0.0.0/0
-        description: Allow all (Render internal services)
+        description: Allow all Render internal services
