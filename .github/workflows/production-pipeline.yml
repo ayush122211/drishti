@@ -71,8 +71,6 @@ jobs:
         run: |
           npm ci
           npm run build
-        env:
-          NODE_ENV: production
 
   # ── 3. Build & Push Docker Images (main branch only) ───────────────────────
   build-and-push:

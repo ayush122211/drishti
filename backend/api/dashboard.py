@@ -246,7 +246,7 @@ async def get_national_health():
         "delay_percentage": f"{(health.delayed_trains / max(health.total_trains, 1) * 100):.1f}%",
         "average_delay_minutes": health.avg_delay,
         "national_stress": f"{health.stress_level:.1f}%",
-        "recommendation": self._get_national_recommendation(health.status)
+        "recommendation": _get_national_recommendation(health.status)
     }
 
 
