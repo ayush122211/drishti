@@ -45,13 +45,18 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
-# Key Pair (assuming one is passed or created)
-# If not passed, we rely on AWS Systems Manager (SSM) for access
+# Key Pair for SSH access
+resource "aws_key_pair" "deploy_key" {
+  key_name   = "${var.app_name}-deploy-key"
+  public_key = var.ssh_public_key
+}
+
 resource "aws_instance" "app_server" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = "t3.micro"
   subnet_id     = aws_subnet.public_1.id
   iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
+  key_name             = aws_key_pair.deploy_key.key_name
 
   vpc_security_group_ids = [
     aws_security_group.ec2_sg.id
@@ -83,48 +88,4 @@ resource "aws_eip" "app_eip" {
   }
 }
 
-# New Security Group for EC2
-resource "aws_security_group" "ec2_sg" {
-  name        = "${var.app_name}-sg-ec2"
-  description = "Security group for EC2 instance"
-  vpc_id      = aws_vpc.main.id
 
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "SSH Access"
-  }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP Access"
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS Access"
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "${var.app_name}-sg-ec2"
-  }
-}
-
-output "ec2_public_ip" {
-  value = aws_eip.app_eip.public_ip
-}

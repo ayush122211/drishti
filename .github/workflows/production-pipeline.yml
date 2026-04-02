@@ -120,6 +120,9 @@ jobs:
     needs: build-and-push
     if: github.event_name == 'push'
     environment: production
+    outputs:
+      ec2_public_ip: ${{ steps.tf-outputs.outputs.ec2_public_ip }}
+      rds_endpoint: ${{ steps.tf-outputs.outputs.rds_endpoint }}
     steps:
       - uses: actions/checkout@v4
 
@@ -135,6 +138,9 @@ jobs:
         with:
           terraform_version: 1.7.0
 
+      - name: Ensure AWS Backend Exists
+        run: bash scripts/setup_aws_backend.sh
+
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
@@ -145,12 +151,20 @@ jobs:
           terraform plan \
             -var="db_username=${{ secrets.DB_USERNAME }}" \
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="ssh_public_key=${{ secrets.EC2_SSH_PUB_KEY }}" \
             -var-file="prod.tfvars" \
             -out=tfplan
 
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
+
+      - name: Get Terraform Outputs
+        id: tf-outputs
+        working-directory: terraform
+        run: |
+          echo "ec2_public_ip=$(terraform output -raw ec2_public_ip)" >> $GITHUB_OUTPUT
+          echo "rds_endpoint=$(terraform output -raw rds_endpoint)" >> $GITHUB_OUTPUT
 
   # ── 5. Deploy to EC2 ────────────────────────────────────────────────────────
   deploy:
@@ -165,7 +179,7 @@ jobs:
       - name: Copy docker-compose to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ needs.terraform.outputs.ec2_public_ip }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           source: "docker-compose.production.yml"
@@ -174,7 +188,7 @@ jobs:
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ needs.terraform.outputs.ec2_public_ip }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
@@ -186,7 +200,7 @@ jobs:
 
             # Write env file
             cat > .env <<EOF
-            DATABASE_URL=postgresql://${{ secrets.DB_USERNAME }}:${{ secrets.DB_PASSWORD }}@${{ secrets.RDS_ENDPOINT }}/drishti_db?sslmode=require
+            DATABASE_URL=postgresql://${{ secrets.DB_USERNAME }}:${{ secrets.DB_PASSWORD }}@${{ needs.terraform.outputs.rds_endpoint }}/drishti_db?sslmode=require
             GITHUB_REPOSITORY=${{ github.repository }}
             EOF
 
